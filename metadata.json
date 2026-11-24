@@ -1,0 +1,8 @@
+{
+  "name": "YSM Three.js Engine & Workbench",
+  "description": "Browser-based WebGL2 Three.js library and interactive debugger for loading, parsing, and animating Yes Steve Model (YSM) Minecraft Bedrock models and animations.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
