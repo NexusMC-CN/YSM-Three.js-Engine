@@ -167,7 +167,12 @@ export default function App() {
         const loaded = await loaderRef.current!.load(source, { filename });
         setCustomPackName(label);
         mountLoadedModel(loaded, label, '外部导入');
-        setStatusNotice(`已成功加载「${loaded.manifest?.name ?? label}」`);
+        const warnings = loaded.controller.getExpressionWarnings();
+        const firstWarning = warnings[0];
+        const warningNotice = firstWarning
+          ? `；${warnings.length} 处无效动画表达式已使用默认值（${firstWarning.animation} / ${firstWarning.bone ?? firstWarning.channel}）`
+          : '';
+        setStatusNotice(`已成功加载「${loaded.manifest?.name ?? label}」${warningNotice}`);
       } catch (err) {
         setErrorMsg(err instanceof Error ? err.message : String(err));
       } finally {
@@ -317,6 +322,7 @@ export default function App() {
           delta_time: 1 / 60,
         },
         variables: model.controller.variables,
+        readBoneRotation: model.readBoneRotation,
       });
       setMolangOutput({ expr, result: Number(result).toFixed(4) });
     } catch (err) {
@@ -526,7 +532,7 @@ export default function App() {
               释放以加载 YSM 模型包
             </p>
             <p className="text-xs text-slate-300">
-              支持 .zip 压缩包或包含 main.json / *.animation.json / *.png 的文件集
+              支持 .zip / .ysm 模型包或包含 main.json / *.animation.json / *.png 的文件集
             </p>
           </div>
         </div>

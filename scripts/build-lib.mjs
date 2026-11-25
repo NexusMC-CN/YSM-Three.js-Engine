@@ -22,7 +22,10 @@ await build({
   treeShaking: true,
   external: ['three'],
   sourcemap: false,
+  banner: { js: '/*! YSGP decoder includes OpenYSM code (c) 2026 OpenYSM, MIT. See THIRD_PARTY_NOTICES.md. */' },
 });
+
+fs.copyFileSync('THIRD_PARTY_NOTICES.md', path.join(path.dirname(outFile), 'THIRD_PARTY_NOTICES.md'));
 
 const raw = fs.readFileSync(outFile);
 const gzipped = zlib.gzipSync(raw, { level: 9 });

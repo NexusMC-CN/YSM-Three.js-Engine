@@ -179,7 +179,7 @@ export function ControlDock(props: ControlDockProps) {
           </div>
 
           {/* Tab Panel Body */}
-          <div className="p-4">
+          <div className="p-4 max-h-[48vh] overflow-y-auto overscroll-contain">
             {/* TAB 1: Models & Import */}
             {activeTab === 'models' && (
               <div className="space-y-3">

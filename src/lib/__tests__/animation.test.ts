@@ -6,6 +6,62 @@ import { KeyframeTrack } from '../animation/KeyframeTrack';
 import { AnimationController } from '../animation/AnimationController';
 import type { Vec3 } from '../parser/types';
 
+test('invalid animation scalars use channel defaults, keep valid axes and report their source', () => {
+  const evaluator = new MolangEvaluator();
+  const clips = new BedrockAnimationParser().parse({ animations: {
+    statue: {
+      loop: true,
+      bones: { UpperBody: {
+        rotation: { '0': [10, '、', 'q.ground_speed * 5'], '1': [20, 30, 40] },
+        position: ['、', 2, 3],
+        scale: [2, '、', 0],
+      } },
+    },
+    optional: { loop: true, blend_weight: '、', bones: { Other: { rotation: [5, 0, 0] } } },
+  } }).clips;
+  const controller = new AnimationController(clips, ['UpperBody', 'Other'], evaluator);
+  controller.play('statue');
+  controller.play('optional');
+  const pose = controller.evaluate(0, { ground_speed: 2 }).get('UpperBody')!;
+  assert.deepEqual(pose.rotation, [10, 0, 10]);
+  assert.deepEqual(pose.position, [0, 2, 3]);
+  assert.deepEqual(pose.scale, [2, 1, 0]);
+  assert.equal(controller.evaluate(0).get('Other')!.rotation[0], 5);
+  const warnings = controller.getExpressionWarnings();
+  assert.equal(warnings.length, 4, 'Identical pre/post values should produce one warning per component');
+  assert.deepEqual(warnings[0], {
+    animation: 'statue', bone: 'UpperBody', channel: 'rotation', time: 0, axis: 1,
+    expression: '、', fallback: 0,
+    message: 'MolangEvaluator: Unexpected character "、" at index 0 in "、"',
+  });
+  assert.equal(warnings[2].fallback, 1, 'Invalid scale components must preserve unit scale');
+  assert.equal(warnings[3].channel, 'blend_weight');
+  warnings.length = 0;
+  assert.equal(controller.getExpressionWarnings().length, 4, 'Callers cannot clear diagnostics');
+  assert.throws(() => evaluator.compile('、'), /Unexpected character/, 'Interactive evaluation remains strict');
+  controller.stop('optional');
+  assert.deepEqual(controller.evaluate(0.5, { ground_speed: 2 }).get('UpperBody')!.rotation, [15, 15, 25]);
+  assert.equal(controller.getExpressionWarnings().length, 4, 'Frame updates must not repeat warnings');
+});
+
+test('background YSM layers persist across main-clip crossfades and can still be stopped', () => {
+  const clips = new BedrockAnimationParser().parse({ animations: {
+    parallel1: { loop: true, bones: { accessory: { scale: 0 } } },
+    idle: { loop: true, bones: { arm: { rotation: [10, 0, 0] } } },
+    walk: { loop: true, bones: { arm: { rotation: [20, 0, 0] } } },
+  } }).clips;
+  const controller = new AnimationController(clips, ['accessory', 'arm']);
+  controller.play('parallel1', { persistent: true });
+  controller.play('idle');
+  controller.crossFadeTo('walk', 0.1);
+  const pose = controller.evaluate(0.2);
+  assert.deepEqual(controller.getActiveLayers().map((layer) => layer.name), ['parallel1', 'walk']);
+  assert.deepEqual(pose.get('accessory')!.scale, [0, 0, 0]);
+  assert.deepEqual(pose.get('arm')!.rotation, [20, 0, 0]);
+  controller.stopAll();
+  assert.deepEqual(controller.getActiveLayers(), []);
+});
+
 test('KeyframeTrack accurately interpolates linear, step, and catmullrom with tangents', () => {
   const ev = new MolangEvaluator();
   const ctx = { query: { anim_time: 0 }, variables: {} };

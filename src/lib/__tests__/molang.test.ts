@@ -76,3 +76,70 @@ test('MolangEvaluator caches compiled closures by expression string', () => {
   assert.equal(ev.cacheSize, 1);
   assert.ok(Math.abs(fn1(makeCtx({ anim_time: 0.5, ground_speed: 2 })) - 3) < 1e-6);
 });
+
+test('YSM bone rotation supports vector member access with live case-sensitive bone names', () => {
+  const evaluator = new MolangEvaluator();
+  const expression = "(v.legOrnamentsAngle - ysm.bone_rot('LeftLeg').x)*0.5";
+  const angles = [30, -15, 60];
+  const context: MolangEvalContext = {
+    ...makeCtx(),
+    variables: { legornamentsangle: 50 },
+    readBoneRotation: (name, axis) => name === 'LeftLeg' ? angles[axis] : undefined,
+  };
+  const fn = evaluator.compile(expression);
+  assert.equal(fn(context), 10);
+  angles[0] = -10;
+  assert.equal(fn(context), 30, 'Cached expressions must query current bone data');
+  assert.equal(evaluator.evaluate('ysm.bone_rot("LeftLeg").y', context), -15);
+  assert.equal(evaluator.evaluate("(ysm.bone_rot('LeftLeg')).z + .5", context), 60.5);
+  assert.equal(evaluator.evaluate("ysm.bone_rot('leftleg').x", context), 0);
+  assert.equal(evaluator.evaluate("ysm.bone_rot('missing').x ?? 7", context), 7);
+  assert.equal(fn(makeCtx()), 0, 'Missing model context must not throw');
+  assert.equal(evaluator.evaluate("ysm.bone_rot('LeftLeg').x", { ...context, readBoneRotation: () => NaN }), 0);
+  assert.throws(() => evaluator.compile('ysm.bone_rot(1).x'), /quoted bone name/);
+  assert.throws(() => evaluator.compile("ysm.bone_rot('LeftLeg').w"), /component/);
+  assert.throws(() => evaluator.compile('math.sin(0).x'), /member/);
+});
+
+test('MolangEvaluator supports null coalescing without replacing zero or false', () => {
+  const ev = new MolangEvaluator();
+  const ctx = makeCtx({ is_on_ground: false });
+
+  assert.equal(ev.evaluate('v.red_bow_headdress??1', ctx), 1);
+  ctx.variables.red_bow_headdress = 0;
+  assert.equal(ev.evaluate('v.red_bow_headdress??1', ctx), 0);
+  assert.equal(ev.evaluate('q.is_on_ground ?? 1', ctx), 0);
+  assert.equal(ev.evaluate('v.missing ?? t.missing ?? q.ground_speed + 1', ctx), 2.2);
+  assert.equal(ev.evaluate('q.missing ?? 1 ? 4 : 5', ctx), 4);
+  assert.equal(ev.evaluate('0 ?? (v.changed = 1)', ctx), 0);
+  assert.equal(ctx.variables.changed, undefined);
+  assert.equal(ev.evaluate('v.missing + 2', ctx), 2);
+});
+
+test('YSM head queries and named second-order dynamics accept Unicode string arguments', () => {
+  const ev = new MolangEvaluator();
+  const ctx = makeCtx({ life_time: 0, head_yaw: 30, head_pitch: -15 });
+  const expression = "ysm.second_order('眼睛yaw', ysm.head_yaw / 180, 2, 0.8, 0)";
+
+  assert.equal(ev.evaluate('ysm.head_pitch', ctx), -15);
+  assert.equal(ev.evaluate(expression, ctx), 1 / 6);
+  assert.equal(ev.evaluate('ysm.second_order("头发pitch", -ysm.head_pitch, 2, 0.6, 0)', ctx), 15);
+  assert.equal(ev.evaluate("ysm.second_order('hair\\'s yaw', 4, 2, 0.8, 0)", ctx), 4);
+
+  ctx.query.head_yaw = 90;
+  ctx.query.life_time = 1 / 60;
+  const first = ev.evaluate(expression, ctx);
+  assert.ok(first < 0.5, 'Second-order motion should ease towards the new target');
+  assert.equal(ev.evaluate(expression, ctx), first, 'Repeated reads in a frame must reuse the result');
+  for (let frame = 2; frame <= 180; frame++) {
+    ctx.query.life_time = frame / 60;
+    assert.ok(Number.isFinite(ev.evaluate(expression, ctx)));
+  }
+  assert.ok(Math.abs(ev.evaluate(expression, ctx) - 0.5) < 1e-5);
+
+  const otherCtx = makeCtx({ life_time: 0, head_yaw: -90 });
+  assert.equal(ev.evaluate(expression, otherCtx), -0.5, 'Dynamics state must be isolated per model');
+  assert.throws(() => ev.compile("ysm.second_order('unterminated, 1, 2, 0.8, 0)"), /Unterminated/);
+  assert.throws(() => ev.compile("ysm.second_order('name', 1)"), /second_order/);
+  assert.throws(() => ev.compile("math.sin('name')"), /numeric/);
+});

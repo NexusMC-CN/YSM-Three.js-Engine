@@ -11,6 +11,7 @@ import type {
   Vec3,
   YsmManifest,
   YsmTextureDescriptor,
+  YsmBakedFace,
 } from './types';
 
 /** Raw Bedrock 1.12.0+ face UV definition */
@@ -32,6 +33,7 @@ interface RawCube {
   pivot?: Vec3;
   rotation?: Vec3;
   material_instance?: string;
+  ysm_faces?: YsmBakedFace[];
 }
 
 interface RawBone {
@@ -423,6 +425,7 @@ export class BedrockModelParser {
           ...(materialKey ? { materialKey } : {}),
           ...(rawCube.pivot ? { pivot: toVec3(rawCube.pivot) } : {}),
           ...(rawCube.rotation ? { rotation: toVec3(rawCube.rotation) } : {}),
+          ...(rawCube.ysm_faces ? { bakedFaces: rawCube.ysm_faces } : {}),
         };
 
         parsedCubes.push(parsedCube);
@@ -592,6 +595,9 @@ export class BedrockModelParser {
       raw.bone_textures && typeof raw.bone_textures === 'object'
         ? (raw.bone_textures as Record<string, string>)
         : undefined;
+    const properties = (raw.properties as Record<string, unknown>) ?? {};
+    const positiveScale = (value: unknown): number | undefined =>
+      typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : undefined;
 
     return {
       specVersion: Number(raw.spec ?? 2),
@@ -602,6 +608,11 @@ export class BedrockModelParser {
       animationPaths,
       textures,
       boneTextures,
+      widthScale: positiveScale(properties.width_scale),
+      heightScale: positiveScale(properties.height_scale),
+      autoAnimations: Array.isArray(properties.auto_animations)
+        ? properties.auto_animations.filter((name): name is string => typeof name === 'string')
+        : undefined,
     };
   }
 

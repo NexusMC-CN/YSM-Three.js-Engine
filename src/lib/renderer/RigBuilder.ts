@@ -346,10 +346,12 @@ export function buildModelRig(
           br[2] + delta.rotation[2],
         );
         node.pivotGroup.scale.set(delta.scale[0], delta.scale[1], delta.scale[2]);
+        node.pivotGroup.visible = delta.scale.some((value) => value !== 0);
       } else {
         node.pivotGroup.position.set(bp[0], bp[1], bp[2]);
         setBedrockEulerDegrees(node.pivotGroup.rotation, br[0], br[1], br[2]);
         node.pivotGroup.scale.set(1, 1, 1);
+        node.pivotGroup.visible = true;
       }
     }
 
@@ -365,6 +367,7 @@ export function buildModelRig(
       node.pivotGroup.position.set(bp[0], bp[1], bp[2]);
       setBedrockEulerDegrees(node.pivotGroup.rotation, br[0], br[1], br[2]);
       node.pivotGroup.scale.set(1, 1, 1);
+      node.pivotGroup.visible = true;
     }
     if (debugVisible && showPivots) {
       updateBoneLinks();

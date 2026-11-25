@@ -56,7 +56,18 @@ export class YsmModelInstance {
     this.bones = rig.bones;
     this.controller = controller;
     this.manifest = manifest;
+    controller.setBoneRotationQuery(this.readBoneRotation);
   }
+
+  /** Reads the last applied local pose, including bind rotation, in Bedrock degrees. */
+  readonly readBoneRotation = (name: string, axis: 0 | 1 | 2): number | undefined => {
+    if (this.disposed) return undefined;
+    const bone = this.bones.get(name);
+    if (!bone) return undefined;
+    const rotation = bone.pivotGroup.rotation;
+    const radians = axis === 0 ? -rotation.x : axis === 1 ? -rotation.y : rotation.z;
+    return radians * 180 / Math.PI;
+  };
 
   /** Available animation clip names */
   get animations(): string[] {

@@ -15,24 +15,20 @@ import {
 type CompiledScalar = number | CompiledMolangFn;
 type CompiledVec3 = [CompiledScalar, CompiledScalar, CompiledScalar];
 
+export interface KeyframeExpressionWarning {
+  channel: BoneChannelType;
+  time?: number;
+  axis: 0 | 1 | 2;
+  expression: string;
+  fallback: number;
+  message: string;
+}
+
 interface CompiledKeyframe {
   time: number;
   pre: CompiledVec3;
   post: CompiledVec3;
   lerpMode: InterpolationMode;
-}
-
-function compileScalar(val: MolangValue, evaluator: MolangEvaluator): CompiledScalar {
-  if (typeof val === 'number') return val;
-  return evaluator.compile(val);
-}
-
-function compileVec3(vec: MolangVec3, evaluator: MolangEvaluator): CompiledVec3 {
-  return [
-    compileScalar(vec[0], evaluator),
-    compileScalar(vec[1], evaluator),
-    compileScalar(vec[2], evaluator),
-  ];
 }
 
 function evalScalar(val: CompiledScalar, ctx: MolangEvalContext): number {
@@ -99,15 +95,45 @@ export class KeyframeTrack {
   private readonly _p2: Vec3 = [0, 0, 0];
   private readonly _p3: Vec3 = [0, 0, 0];
 
-  constructor(parsed: ParsedBoneChannel, evaluator: MolangEvaluator) {
+  constructor(
+    parsed: ParsedBoneChannel,
+    evaluator: MolangEvaluator,
+    onWarning?: (warning: KeyframeExpressionWarning) => void,
+  ) {
     this.channel = parsed.channel;
+    const fallback = parsed.channel === 'scale' ? 1 : 0;
+    const reported = new Set<string>();
+    const compileScalar = (value: MolangValue, axis: 0 | 1 | 2, time?: number): CompiledScalar => {
+      if (typeof value === 'number') return value;
+      try {
+        return evaluator.compile(value);
+      } catch (error) {
+        // Importers can recover one invalid scalar without losing the valid
+        // axes or other clips. Standalone tracks remain strict by default.
+        if (!onWarning) throw error;
+        const key = JSON.stringify([time, axis, value]);
+        if (!reported.has(key)) {
+          reported.add(key);
+          onWarning({
+            channel: parsed.channel,
+            ...(time !== undefined ? { time } : {}),
+            axis, expression: value, fallback,
+            message: error instanceof Error ? error.message : String(error),
+          });
+        }
+        return fallback;
+      }
+    };
+    const compileVec3 = (vec: MolangVec3, time?: number): CompiledVec3 => [
+      compileScalar(vec[0], 0, time), compileScalar(vec[1], 1, time), compileScalar(vec[2], 2, time),
+    ];
     if (parsed.staticValue) {
-      this.staticCompiled = compileVec3(parsed.staticValue, evaluator);
+      this.staticCompiled = compileVec3(parsed.staticValue);
     }
     this.keyframes = parsed.keyframes.map((kf) => ({
       time: kf.time,
-      pre: compileVec3(kf.pre, evaluator),
-      post: compileVec3(kf.post, evaluator),
+      pre: compileVec3(kf.pre, kf.time),
+      post: compileVec3(kf.post, kf.time),
       lerpMode: kf.lerpMode,
     }));
   }

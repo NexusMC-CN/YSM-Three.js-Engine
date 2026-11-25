@@ -126,6 +126,28 @@ export const YsmViewport = forwardRef<YsmViewportHandle, YsmViewportProps>(
         activeModelRef.current = instance;
         if (scene && instance) {
           scene.add(instance.root);
+          const camera = cameraRef.current;
+          const bounds = new THREE.Box3();
+          instance.root.updateWorldMatrix(true, true);
+          instance.root.traverseVisible((object) => {
+            if (object instanceof THREE.Mesh) bounds.expandByObject(object);
+          });
+          const sphere = bounds.getBoundingSphere(new THREE.Sphere());
+          if (camera && sphere.radius > 0 && Number.isFinite(sphere.radius)) {
+            // Imported packs can be much taller or wider than the built-in examples.
+            const halfFov = THREE.MathUtils.degToRad(camera.fov) / 2;
+            const halfHorizontalFov = Math.atan(Math.tan(halfFov) * camera.aspect);
+            const distance = sphere.radius / Math.sin(Math.min(halfFov, halfHorizontalFov)) * 1.1;
+            const transition = camTransitionRef.current;
+            transition.targetLook.copy(sphere.center);
+            const preset = CAMERA_PRESETS.quarter;
+            transition.targetPos.set(
+              preset.pos[0] - preset.target[0],
+              preset.pos[1] - preset.target[1],
+              preset.pos[2] - preset.target[2],
+            ).normalize().multiplyScalar(distance).add(sphere.center);
+            transition.active = true;
+          }
         }
       },
       setCameraPreset(preset: CameraPreset) {

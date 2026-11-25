@@ -25,6 +25,9 @@ export default defineConfig(() => {
           if (fs.existsSync(distDir) && fs.existsSync(srcAssets)) {
             fs.cpSync(srcAssets, distAssets, {recursive: true, force: true});
           }
+          if (fs.existsSync(distDir)) {
+            fs.copyFileSync(path.resolve(__dirname, 'THIRD_PARTY_NOTICES.md'), path.join(distDir, 'THIRD_PARTY_NOTICES.md'));
+          }
         },
       },
     ],

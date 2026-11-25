@@ -22,12 +22,15 @@ export interface MolangEvalContext {
   variables: Record<string, number>;
   /** Ephemeral temp storage scoped to a single evaluation call (temp.* / t.*) */
   temp?: Record<string, number>;
+  /** Rendered local bone rotation in Bedrock degrees; bone names are case-sensitive. */
+  readBoneRotation?: (name: string, axis: 0 | 1 | 2) => number | undefined;
 }
 
 export type CompiledMolangFn = (ctx: MolangEvalContext) => number;
 
 type TokenType =
   | 'number'
+  | 'string'
   | 'ident'
   | 'op'
   | 'lparen'
@@ -36,6 +39,7 @@ type TokenType =
   | 'question'
   | 'colon'
   | 'semi'
+  | 'dot'
   | 'eof';
 
 interface Token {
@@ -112,6 +116,26 @@ function tokenize(source: string): Token[] {
       continue;
     }
 
+    // YSM extension functions use quoted names, including non-ASCII text.
+    if (ch === "'" || ch === '"') {
+      const quote = ch;
+      let value = '';
+      i++;
+      while (i < len && source[i] !== quote) {
+        if (source[i] === '\\') {
+          i++;
+          if (i >= len) break;
+        }
+        value += source[i++];
+      }
+      if (i >= len) {
+        throw new Error(`MolangEvaluator: Unterminated string in "${source}"`);
+      }
+      i++;
+      tokens.push({ type: 'string', value });
+      continue;
+    }
+
     // Number literal (supports decimals and scientific notation like 1e-3)
     if (
       (ch >= '0' && ch <= '9') ||
@@ -172,7 +196,8 @@ function tokenize(source: string): Token[] {
       two === '<=' ||
       two === '>=' ||
       two === '&&' ||
-      two === '||'
+      two === '||' ||
+      two === '??'
     ) {
       tokens.push({ type: 'op', value: two });
       i += 2;
@@ -180,6 +205,11 @@ function tokenize(source: string): Token[] {
     }
 
     // Single-character punctuation & operators
+    if (ch === '.') {
+      tokens.push({ type: 'dot', value: '.' });
+      i++;
+      continue;
+    }
     if (ch === '(') {
       tokens.push({ type: 'lparen', value: '(' });
       i++;
@@ -233,7 +263,27 @@ function tokenize(source: string): Token[] {
   return tokens;
 }
 
-type EvalNode = (ctx: MolangEvalContext, temp: Record<string, number>) => number;
+type OptionalRead = (ctx: MolangEvalContext, temp: Record<string, number>) => number | undefined;
+type EvalNode = ((ctx: MolangEvalContext, temp: Record<string, number>) => number) & {
+  /** Preserve missing reads for `??`, while ordinary arithmetic still defaults to zero. */
+  readOptional?: OptionalRead;
+  readComponent?: (ctx: MolangEvalContext, axis: 0 | 1 | 2) => number | undefined;
+};
+
+function compileRead(readOptional: OptionalRead): EvalNode {
+  const node: EvalNode = (ctx, temp) => readOptional(ctx, temp) ?? 0;
+  node.readOptional = readOptional;
+  return node;
+}
+
+interface SecondOrderState {
+  input: number;
+  value: number;
+  velocity: number;
+  time: number;
+}
+
+type SecondOrderStates = WeakMap<MolangEvalContext, Map<string, SecondOrderState>>;
 
 interface StatementNode {
   isReturn: boolean;
@@ -246,7 +296,11 @@ interface StatementNode {
 class MolangCompiler {
   private pos = 0;
 
-  constructor(private readonly tokens: Token[], private readonly source: string) {}
+  constructor(
+    private readonly tokens: Token[],
+    private readonly source: string,
+    private readonly secondOrderStates: SecondOrderStates,
+  ) {}
 
   compile(): CompiledMolangFn {
     const statements: StatementNode[] = [];
@@ -330,7 +384,7 @@ class MolangCompiler {
   }
 
   private parseTernary(): EvalNode {
-    const cond = this.parseLogicalOr();
+    const cond = this.parseNullCoalescing();
     if (this.check('question')) {
       this.advance();
       const whenTrue = this.parseExpression();
@@ -342,6 +396,15 @@ class MolangCompiler {
       return (ctx, temp) => (cond(ctx, temp) !== 0 ? whenTrue(ctx, temp) : whenFalse(ctx, temp));
     }
     return cond;
+  }
+
+  private parseNullCoalescing(): EvalNode {
+    const left = this.parseLogicalOr();
+    if (!this.checkOp('??')) return left;
+    this.advance();
+    const right = this.parseNullCoalescing();
+    const read = left.readOptional ?? left;
+    return (ctx, temp) => read(ctx, temp) ?? right(ctx, temp);
   }
 
   private parseLogicalOr(): EvalNode {
@@ -463,7 +526,23 @@ class MolangCompiler {
       const operand = this.parseUnary();
       return (ctx, temp) => (operand(ctx, temp) === 0 ? 1 : 0);
     }
-    return this.parsePrimary();
+    return this.parsePostfix();
+  }
+
+  private parsePostfix(): EvalNode {
+    let node = this.parsePrimary();
+    while (this.check('dot')) {
+      this.advance();
+      const component = this.advance();
+      const axis = ['x', 'y', 'z'].indexOf(component.value.toLowerCase());
+      if (component.type !== 'ident' || axis < 0) {
+        throw new Error(`MolangEvaluator: Invalid vector component "${component.value}" in "${this.source}"`);
+      }
+      const read = node.readComponent;
+      if (!read) throw new Error(`MolangEvaluator: Cannot access member "${component.value}" of a scalar in "${this.source}"`);
+      node = compileRead((ctx) => read(ctx, axis as 0 | 1 | 2));
+    }
+    return node;
   }
 
   private parsePrimary(): EvalNode {
@@ -495,10 +574,10 @@ class MolangCompiler {
       // Function call: math.sin(...), query.is_on_ground(), etc.
       if (this.check('lparen')) {
         this.advance();
-        const args: EvalNode[] = [];
+        const args: (EvalNode | string)[] = [];
         if (!this.check('rparen')) {
           do {
-            args.push(this.parseExpression());
+            args.push(this.check('string') ? this.advance().value : this.parseExpression());
           } while (this.check('comma') && this.advance());
         }
         if (!this.check('rparen')) {
@@ -516,10 +595,36 @@ class MolangCompiler {
     );
   }
 
-  private compileCall(name: string, args: EvalNode[]): EvalNode {
+  private compileCall(name: string, rawArgs: (EvalNode | string)[]): EvalNode {
     const dotIdx = name.indexOf('.');
     const ns = dotIdx >= 0 ? name.slice(0, dotIdx) : '';
     const fnName = dotIdx >= 0 ? name.slice(dotIdx + 1) : name;
+
+    if (name === 'ysm.bone_rot') {
+      const boneName = rawArgs[0];
+      if (rawArgs.length !== 1 || typeof boneName !== 'string') {
+        throw new Error('MolangEvaluator: ysm.bone_rot expects one quoted bone name.');
+      }
+      const node: EvalNode = () => 0;
+      node.readComponent = (ctx, axis) => ctx.readBoneRotation?.(boneName, axis);
+      return node;
+    }
+
+    if (name === 'ysm.second_order') {
+      const [key, ...parameters] = rawArgs;
+      if (typeof key !== 'string' || parameters.length !== 4 || parameters.some((arg) => typeof arg !== 'function')) {
+        throw new Error('MolangEvaluator: ysm.second_order expects a quoted name and four numeric arguments.');
+      }
+      const [input, frequency, damping, response] = parameters as EvalNode[];
+      return (ctx, temp) => this.sampleSecondOrder(
+        ctx, key, input(ctx, temp), frequency(ctx, temp), damping(ctx, temp), response(ctx, temp),
+      );
+    }
+
+    if (rawArgs.some((arg) => typeof arg === 'string')) {
+      throw new Error(`MolangEvaluator: "${name}" expects numeric arguments.`);
+    }
+    const args = rawArgs as EvalNode[];
 
     if (ns === 'math' || ns === 'm') {
       const fn = MATH_FUNCS[fnName];
@@ -556,6 +661,52 @@ class MolangCompiler {
     throw new Error(`MolangEvaluator: Unknown function "${name}"`);
   }
 
+  private sampleSecondOrder(
+    ctx: MolangEvalContext,
+    key: string,
+    input: number,
+    frequency: number,
+    damping: number,
+    response: number,
+  ): number {
+    // Named dynamics are shared across expressions, but isolated to this model's context.
+    const time = ctx.query.life_time;
+    if (typeof time !== 'number' || !Number.isFinite(time)) return input;
+    let states = this.secondOrderStates.get(ctx);
+    if (!states) {
+      states = new Map();
+      this.secondOrderStates.set(ctx, states);
+    }
+    const state = states.get(key);
+    const dt = state ? time - state.time : 0;
+    if (!state || dt < 0 || dt > 0.25 || frequency <= 0) {
+      states.set(key, { input, value: input, velocity: 0, time });
+      return input;
+    }
+    // Interpolation and multiple channels can read the same named value in one frame.
+    if (dt === 0) return state.value;
+
+    const omega = 2 * Math.PI * frequency;
+    const k1 = 2 * Math.max(0, damping) / omega;
+    const k2 = 1 / (omega * omega);
+    const k3 = response * Math.max(0, damping) / omega;
+    const derivative = (input - state.input) / dt;
+    const steps = Math.min(64, Math.max(1, Math.ceil(dt * frequency * 8)));
+    const step = dt / steps;
+    const stableK2 = Math.max(k2, step * step / 2 + step * k1 / 2, step * k1);
+    for (let i = 0; i < steps; i++) {
+      state.value += step * state.velocity;
+      state.velocity += step * (input + k3 * derivative - state.value - k1 * state.velocity) / stableK2;
+    }
+    if (!Number.isFinite(state.value) || !Number.isFinite(state.velocity)) {
+      state.value = input;
+      state.velocity = 0;
+    }
+    state.input = input;
+    state.time = time;
+    return state.value;
+  }
+
   private compileSymbol(name: string): EvalNode {
     if (name === 'math.pi' || name === 'm.pi') {
       return () => Math.PI;
@@ -563,38 +714,35 @@ class MolangCompiler {
 
     const dotIdx = name.indexOf('.');
     if (dotIdx < 0) {
-      return (ctx, temp) => temp[name] ?? ctx.variables[name] ?? 0;
+      return compileRead((ctx, temp) => temp[name] ?? ctx.variables[name]);
     }
 
     const ns = name.slice(0, dotIdx);
     const prop = name.slice(dotIdx + 1);
 
-    if (ns === 'query' || ns === 'q') {
+    if (ns === 'query' || ns === 'q' || ns === 'ysm') {
       return this.compileQueryRead(prop);
     }
     if (ns === 'variable' || ns === 'v') {
-      return (ctx) => ctx.variables[prop] ?? 0;
+      return compileRead((ctx) => ctx.variables[prop]);
     }
     if (ns === 'temp' || ns === 't') {
-      return (_ctx, temp) => temp[prop] ?? 0;
+      return compileRead((_ctx, temp) => temp[prop]);
     }
     if (ns === 'context' || ns === 'c') {
-      return (ctx) => {
-        const val = ctx.query[prop];
-        return typeof val === 'boolean' ? (val ? 1 : 0) : (val ?? 0);
-      };
+      return this.compileQueryRead(prop);
     }
 
     return () => 0;
   }
 
   private compileQueryRead(prop: string): EvalNode {
-    return (ctx) => {
+    return compileRead((ctx) => {
       const val = ctx.query[prop];
-      if (val === undefined) return 0;
+      if (val === undefined) return undefined;
       if (typeof val === 'boolean') return val ? 1 : 0;
       return Number.isFinite(val) ? val : 0;
-    };
+    });
   }
 
   private peek(): Token {
@@ -627,6 +775,7 @@ class MolangCompiler {
  */
 export class MolangEvaluator {
   private readonly cache = new Map<string, CompiledMolangFn>();
+  private secondOrderStates: SecondOrderStates = new WeakMap();
 
   /**
    * Compiles a MoLang expression string into a reusable closure and caches it.
@@ -637,7 +786,7 @@ export class MolangEvaluator {
     if (cached) return cached;
 
     const tokens = tokenize(trimmed);
-    const compiled = new MolangCompiler(tokens, trimmed).compile();
+    const compiled = new MolangCompiler(tokens, trimmed, this.secondOrderStates).compile();
     this.cache.set(trimmed, compiled);
     return compiled;
   }
@@ -661,5 +810,6 @@ export class MolangEvaluator {
   /** Clears the compiled closure cache */
   clearCache(): void {
     this.cache.clear();
+    this.secondOrderStates = new WeakMap();
   }
 }

@@ -63,7 +63,31 @@ function applyFaceUV(
 export function buildCubeGeometry(
   cube: ParsedCube,
   unitScale = BEDROCK_UNIT_SCALE,
-): THREE.BoxGeometry {
+): THREE.BufferGeometry {
+  if (cube.bakedFaces) {
+    const positions: number[] = [];
+    const normals: number[] = [];
+    const uvs: number[] = [];
+    const indices: number[] = [];
+    for (const face of cube.bakedFaces) {
+      const base = positions.length / 3;
+      for (let i = 0; i < 4; i++) {
+        const point = face.positions[i];
+        positions.push(-(point[0] - cube.center[0]) * unitScale, (point[1] - cube.center[1]) * unitScale, (point[2] - cube.center[2]) * unitScale);
+        normals.push(-face.normal[0], face.normal[1], face.normal[2]);
+        uvs.push(face.uvs[i][0], face.uvs[i][1]);
+      }
+      indices.push(base, base + 1, base + 2, base, base + 2, base + 3);
+    }
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    geometry.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
+    geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+    geometry.setIndex(indices);
+    geometry.computeBoundingBox();
+    geometry.computeBoundingSphere();
+    return geometry;
+  }
   // Clamp tiny/zero-thickness planes (e.g. hair strands or capes) so BoxGeometry stays valid
   const w = Math.max(0.0001, Math.abs(cube.inflatedSize[0]) * unitScale);
   const h = Math.max(0.0001, Math.abs(cube.inflatedSize[1]) * unitScale);

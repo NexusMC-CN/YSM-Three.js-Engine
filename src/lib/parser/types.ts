@@ -29,6 +29,13 @@ export interface NormalizedFaceUV {
 
 export type CubeUVMap = Record<CubeFaceName, NormalizedFaceUV>;
 
+/** Compiled YSM quad, preserved in Bedrock pixel space with per-vertex UVs. */
+export interface YsmBakedFace {
+  normal: Vec3;
+  positions: Vec3[];
+  uvs: Vec2[];
+}
+
 export interface ParsedCube {
   /** Bedrock origin [ox, oy, oz] in pixel units (16 units = 1 block) */
   origin: Vec3;
@@ -54,6 +61,8 @@ export interface ParsedCube {
   textureIndex: number;
   /** Optional explicit material/texture key */
   materialKey?: string;
+  /** Exact compiled quads, including baked cube rotations and zero-thickness planes. */
+  bakedFaces?: YsmBakedFace[];
 }
 
 export interface ParsedLocator {
@@ -187,4 +196,8 @@ export interface YsmManifest {
   textures: YsmTextureDescriptor[];
   /** Optional bone-name to texture-id overrides */
   boneTextures?: Record<string, string>;
+  /** Model proportions and always-on YSM parallel animation layers. */
+  widthScale?: number;
+  heightScale?: number;
+  autoAnimations?: string[];
 }

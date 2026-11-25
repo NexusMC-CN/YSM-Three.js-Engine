@@ -8,6 +8,8 @@ import { BEDROCK_UNIT_SCALE } from '../renderer/CubeGeometryBuilder';
 import { buildModelRig } from '../renderer/RigBuilder';
 import { findMatchingArchiveParser } from './ArchiveRegistry';
 import { YsmModelInstance } from './YsmModelInstance';
+import { ysgpArchiveParser } from './YsgpArchiveParser';
+import { isYsgpBytes } from './ysm/YsmCrypto';
 import type {
   VirtualFileSystem,
   YsmLoadOptions,
@@ -108,11 +110,16 @@ export async function unpackArchiveBytes(
     return stripCommonRootPrefix(unpacked);
   }
 
-  // 2. If it looks like an encrypted `.ysm` archive and no parser is registered, fail clearly
+  // 2. Native YSGP support; explicit custom parsers above still take priority.
+  if (isYsgpBytes(bytes)) {
+    return stripCommonRootPrefix(await ysgpArchiveParser.parse(bytes, filename));
+  }
+
+  // Unsupported `.ysm` variants can still be provided by a registered parser.
   if (isYsmArchive(bytes, filename) && !isZipBytes(bytes)) {
     throw new Error(
-      'YsmModelLoader: Encrypted ".ysm" archive detected, but no YsmArchiveParser is registered. ' +
-        'Call registerArchiveParser(yourOpenYsmWasmParser) before loading ".ysm" files.',
+      'YsmModelLoader: Unsupported ".ysm" archive signature. Built-in support expects YSGP (crypto 3). ' +
+        'Use registerArchiveParser() for other archive formats.',
     );
   }
 
@@ -143,7 +150,8 @@ export async function unpackArchiveBytes(
  * - Zip `Blob`, `ArrayBuffer`, or `Uint8Array` (decoded via `fflate`)
  * - Browser `FileList` / `File[]` (folder drag-and-drop or file picker)
  * - In-memory `YsmPackFilesInput` (ideal for procedural skins or bundled demos)
- * - Custom `.ysm` encrypted archives via `registerArchiveParser()`
+ * - YSGP `.ysm` archives (crypto 3, binary formats 16–32), with no registration required
+ * - Additional archive formats via `registerArchiveParser()`
  */
 export class YsmModelLoader {
   readonly modelParser = new BedrockModelParser();
@@ -166,17 +174,23 @@ export class YsmModelLoader {
     const mergedClips: Record<string, ParsedAnimationClip> =
       this.animationParser.mergeSets(animSets);
 
+    const boneNames = parsedModel.bones.map((b) => b.name);
+    const controller = new AnimationController(mergedClips, boneNames, options.evaluator);
+
     const materials = await this.textureManager.loadMaterials(payload.textures);
     const rig = buildModelRig(
       parsedModel,
       materials,
       options.unitScale ?? BEDROCK_UNIT_SCALE,
     );
+    rig.root.scale.set(payload.manifest?.widthScale ?? 1, payload.manifest?.heightScale ?? 1, payload.manifest?.widthScale ?? 1);
+    for (const name of payload.manifest?.autoAnimations ?? []) {
+      controller.play(name, { loop: true, persistent: true });
+    }
 
-    const boneNames = parsedModel.bones.map((b) => b.name);
-    const controller = new AnimationController(mergedClips, boneNames, options.evaluator);
-
-    return new YsmModelInstance(parsedModel, rig, controller, payload.manifest);
+    const instance = new YsmModelInstance(parsedModel, rig, controller, payload.manifest);
+    instance.update(0);
+    return instance;
   }
 
   /**
@@ -256,7 +270,7 @@ export class YsmModelLoader {
 
     for (const [path, data] of vfs.entries()) {
       const lower = path.toLowerCase();
-      if (lower.endsWith('.animation.json') && !animPathsSeen.has(path)) {
+      if (lower.endsWith('.animation.json') && !lower.startsWith('vehicles/') && !lower.startsWith('projectiles/') && !animPathsSeen.has(path)) {
         animPathsSeen.add(path);
         animationJsonTexts.push(textDecoder.decode(data));
       }

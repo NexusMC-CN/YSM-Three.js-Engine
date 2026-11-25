@@ -1,5 +1,6 @@
 import type {
   AnimationLoopMode,
+  BoneChannelType,
   ParsedAnimationClip,
   Vec3,
 } from '../parser/types';
@@ -9,7 +10,18 @@ import {
   type MolangEvalContext,
   type MolangQueryContext,
 } from '../molang/MolangEvaluator';
-import { KeyframeTrack } from './KeyframeTrack';
+import { KeyframeTrack, type KeyframeExpressionWarning } from './KeyframeTrack';
+
+export interface AnimationExpressionWarning {
+  animation: string;
+  bone?: string;
+  channel: BoneChannelType | 'blend_weight';
+  time?: number;
+  axis?: 0 | 1 | 2;
+  expression: string;
+  fallback: number;
+  message: string;
+}
 
 export interface PlayOptions {
   /** Override clip loop mode: true -> 'loop', false -> 'once', or 'hold_on_last_frame' */
@@ -24,6 +36,8 @@ export interface PlayOptions {
   weight?: number;
   /** Reset playback time to 0 if already playing (default true) */
   resetTime?: boolean;
+  /** Keep a background layer running when crossFadeTo switches the main clip. */
+  persistent?: boolean;
 }
 
 export interface BonePoseDelta {
@@ -70,6 +84,7 @@ interface AnimationLayer {
   fadeElapsed: number;
   fadeStartWeight: number;
   finished: boolean;
+  persistent: boolean;
 }
 
 function normalizeLoopOption(
@@ -96,6 +111,7 @@ export class AnimationController {
   private readonly clips = new Map<string, CompiledClip>();
   private readonly layers = new Map<string, AnimationLayer>();
   private readonly poseDeltas = new Map<string, BonePoseDelta>();
+  private expressionWarnings: AnimationExpressionWarning[] = [];
 
   private lifeTime = 0;
   private readonly _sample: Vec3 = [0, 0, 0];
@@ -131,28 +147,42 @@ export class AnimationController {
     }
   }
 
+  /** Supplies the rendered pose for YSM bone queries without depending on Three.js. */
+  setBoneRotationQuery(read: MolangEvalContext['readBoneRotation']): void {
+    this._evalCtx.readBoneRotation = read;
+  }
+
   /** Compiles and registers an animation clip */
   registerClip(parsed: ParsedAnimationClip): void {
+    this.expressionWarnings = this.expressionWarnings.filter((warning) => warning.animation !== parsed.name);
     const tracks: CompiledBoneTracks[] = [];
     for (const boneAnim of Object.values(parsed.bones)) {
+      const onWarning = (warning: KeyframeExpressionWarning): void => {
+        this.expressionWarnings.push({ animation: parsed.name, bone: boneAnim.boneName, ...warning });
+      };
       tracks.push({
         boneName: boneAnim.boneName,
         ...(boneAnim.rotation
-          ? { rotation: new KeyframeTrack(boneAnim.rotation, this.evaluator) }
+          ? { rotation: new KeyframeTrack(boneAnim.rotation, this.evaluator, onWarning) }
           : {}),
         ...(boneAnim.position
-          ? { position: new KeyframeTrack(boneAnim.position, this.evaluator) }
+          ? { position: new KeyframeTrack(boneAnim.position, this.evaluator, onWarning) }
           : {}),
         ...(boneAnim.scale
-          ? { scale: new KeyframeTrack(boneAnim.scale, this.evaluator) }
+          ? { scale: new KeyframeTrack(boneAnim.scale, this.evaluator, onWarning) }
           : {}),
       });
     }
 
-    const blendWeight =
-      typeof parsed.blendWeight === 'number'
-        ? parsed.blendWeight
-        : this.evaluator.compile(parsed.blendWeight);
+    let blendWeight: number | CompiledMolangFn = 1;
+    try {
+      blendWeight = typeof parsed.blendWeight === 'number' ? parsed.blendWeight : this.evaluator.compile(parsed.blendWeight);
+    } catch (error) {
+      this.expressionWarnings.push({
+        animation: parsed.name, channel: 'blend_weight', expression: String(parsed.blendWeight), fallback: 1,
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
 
     const compiled: CompiledClip = {
       name: parsed.name,
@@ -163,6 +193,11 @@ export class AnimationController {
     };
 
     this.clips.set(parsed.name, compiled);
+  }
+
+  /** Invalid imported values replaced with neutral defaults, including their source locations. */
+  getExpressionWarnings(): AnimationExpressionWarning[] {
+    return this.expressionWarnings.map((warning) => ({ ...warning }));
   }
 
   /** Lists all available clip names */
@@ -197,6 +232,7 @@ export class AnimationController {
     const resetTime = options.resetTime ?? true;
 
     if (existing) {
+      existing.persistent = options.persistent ?? existing.persistent;
       if (resetTime) existing.time = 0;
       existing.loop = loop;
       existing.timeScale = timeScale;
@@ -228,6 +264,7 @@ export class AnimationController {
       fadeElapsed: 0,
       fadeStartWeight: 0,
       finished: false,
+      persistent: options.persistent ?? false,
     };
 
     this.layers.set(resolved, layer);
@@ -235,7 +272,7 @@ export class AnimationController {
   }
 
   /**
-   * Smoothly fades out all other currently playing layers while fading in `name` over `duration` seconds.
+   * Fades out other non-persistent layers while fading in `name` over `duration` seconds.
    */
   crossFadeTo(name: string, duration = 0.25, options: PlayOptions = {}): boolean {
     const resolved = this.resolveClipName(name);
@@ -243,7 +280,7 @@ export class AnimationController {
 
     const fade = Math.max(0, duration);
     for (const [layerName, layer] of this.layers.entries()) {
-      if (layerName !== resolved) {
+      if (layerName !== resolved && !layer.persistent) {
         this.beginFadeOut(layer, fade);
       }
     }

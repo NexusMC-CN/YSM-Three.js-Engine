@@ -37,6 +37,7 @@ export type {
   Vec3,
   YsmManifest,
   YsmTextureDescriptor,
+  YsmBakedFace,
 } from './parser/types';
 
 // 2. Pure MoLang Engine (zero Three.js dependency)
@@ -51,6 +52,7 @@ export {
 export { KeyframeTrack } from './animation/KeyframeTrack';
 export {
   AnimationController,
+  type AnimationExpressionWarning,
   type ActiveLayerInfo,
   type BonePoseDelta,
   type PlayOptions,
@@ -93,6 +95,7 @@ export {
   isZipBytes,
   unpackArchiveBytes,
 } from './loader/YsmModelLoader';
+export { ysgpArchiveParser } from './loader/YsgpArchiveParser';
 export type {
   VirtualFileSystem,
   YsmArchiveParser,
