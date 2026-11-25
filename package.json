@@ -1,43 +1,123 @@
 {
-  "name": "react-example",
-  "private": true,
-  "version": "0.0.0",
+  "name": "@lemwood/ysm-threejs-engine",
+  "version": "0.1.0",
+  "description": "YSM model loading, animation and React viewer components for Three.js.",
+  "license": "MIT",
   "type": "module",
+  "main": "./dist-lib/index.cjs",
+  "module": "./dist-lib/index.js",
+  "types": "./dist-lib/types/lib/index.d.ts",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist-lib/types/lib/index.d.ts",
+        "default": "./dist-lib/index.js"
+      },
+      "require": {
+        "types": "./dist-lib/types-cjs/lib/index.d.cts",
+        "default": "./dist-lib/index.cjs"
+      }
+    },
+    "./react": {
+      "import": {
+        "types": "./dist-lib/types/react/index.d.ts",
+        "default": "./dist-lib/react.js"
+      },
+      "require": {
+        "types": "./dist-lib/types-cjs/react/index.d.cts",
+        "default": "./dist-lib/react.cjs"
+      }
+    },
+    "./core": {
+      "import": {
+        "types": "./dist-lib/types/core/index.d.ts",
+        "default": "./dist-lib/core.js"
+      },
+      "require": {
+        "types": "./dist-lib/types-cjs/core/index.d.cts",
+        "default": "./dist-lib/core.cjs"
+      }
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist-lib",
+    "docs",
+    "README.md",
+    "LICENSE",
+    "THIRD_PARTY_NOTICES.md"
+  ],
+  "sideEffects": false,
+  "engines": {
+    "node": ">=20.19"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/NexusMC-CN/YSM-Three.js-Engine.git"
+  },
+  "homepage": "https://github.com/NexusMC-CN/YSM-Three.js-Engine#readme",
+  "bugs": {
+    "url": "https://github.com/NexusMC-CN/YSM-Three.js-Engine/issues"
+  },
+  "keywords": [
+    "ysm",
+    "three",
+    "threejs",
+    "react",
+    "minecraft",
+    "bedrock",
+    "model-viewer",
+    "molang"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
   "scripts": {
     "dev": "vite --port=3000 --host=0.0.0.0",
     "build": "vite build",
     "preview": "vite preview",
-    "clean": "rm -rf dist dist-lib server.js",
     "lint": "tsc --noEmit",
     "test": "tsx --test src/lib/__tests__/*.test.ts",
     "test:snapshots": "tsx scripts/test-ysm-snapshots.ts",
-    "build:lib": "node scripts/build-lib.mjs"
+    "build:lib": "node scripts/build-lib.mjs",
+    "prepack": "npm run build:lib",
+    "prepublishOnly": "npm test && npm run lint",
+    "test:package": "node scripts/test-package.mjs",
+    "test:react-package": "node scripts/test-react-package.mjs"
   },
   "dependencies": {
-    "@google/genai": "^2.4.0",
-    "@tailwindcss/vite": "^4.3.3",
-    "@types/three": "^0.187.0",
-    "@vitejs/plugin-react": "^6.1.1",
-    "dotenv": "^17.2.3",
-    "express": "^4.21.2",
     "fflate": "^0.8.3",
-    "fzstd": "^0.1.1",
-    "lucide-react": "^0.546.0",
-    "motion": "^12.23.24",
-    "react": "^19.0.1",
-    "react-dom": "^19.0.1",
-    "three": "^0.187.0",
-    "vite": "^8.3.0"
+    "fzstd": "^0.1.1"
+  },
+  "peerDependencies": {
+    "react": "^18.3.0 || ^19.0.0",
+    "three": ">=0.170.0 <0.188.0"
+  },
+  "peerDependenciesMeta": {
+    "react": {
+      "optional": true
+    },
+    "three": {
+      "optional": true
+    }
   },
   "devDependencies": {
+    "@tailwindcss/vite": "^4.3.3",
     "@types/node": "^22.14.0",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
-    "autoprefixer": "^10.4.21",
-    "esbuild": "^0.25.0",
+    "@types/three": "^0.187.0",
+    "@vitejs/plugin-react": "^6.1.1",
+    "esbuild": "^0.28.2",
+    "lucide-react": "^0.546.0",
+    "playwright": "^1.65.1",
+    "react": "^19.0.1",
+    "react-dom": "^19.0.1",
     "tailwindcss": "^4.3.3",
+    "three": "^0.187.0",
     "tsx": "^4.21.0",
     "typescript": "^7.0.2",
-    "@types/express": "^4.17.21"
+    "vite": "^8.3.0"
   }
 }

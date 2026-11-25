@@ -1,0 +1,15 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "declaration": true,
+    "emitDeclarationOnly": true,
+    "noEmit": false,
+    "allowJs": false,
+    "rootDir": "src",
+    "outDir": "dist-lib/types",
+    "types": [],
+    "paths": {}
+  },
+  "include": ["src/lib/**/*.ts", "src/core/**/*.ts", "src/react/**/*.tsx", "src/react/**/*.ts", "src/components/YsmViewport.tsx"],
+  "exclude": ["src/lib/__tests__", "dist", "dist-lib", "node_modules"]
+}

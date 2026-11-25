@@ -3,12 +3,13 @@ import {
   useEffect,
   useImperativeHandle,
   useRef,
+  type CSSProperties,
 } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import type { ActiveLayerInfo, MolangQueryContext } from '../lib';
-import { YsmModelInstance } from '../lib';
+import type { YsmModelInstance } from '../lib';
 
 export type CameraPreset = 'front' | 'side' | 'back' | 'closeup' | 'quarter';
 
@@ -40,11 +41,16 @@ export interface YsmViewportHandle {
   };
 }
 
-interface YsmViewportProps {
+export interface YsmViewportProps {
   queryRef: React.MutableRefObject<MolangQueryContext>;
   pausedRef: React.MutableRefObject<boolean>;
   onTelemetry: (telemetry: ViewportTelemetry) => void;
   onContextLost?: (lost: boolean) => void;
+  onError?: (error: Error) => void;
+  className?: string;
+  style?: CSSProperties;
+  /** Set false when the caller owns and disposes the model instance. */
+  disposeModelOnUnmount?: boolean;
 }
 
 const CAMERA_PRESETS: Record<CameraPreset, { pos: [number, number, number]; target: [number, number, number] }> = {
@@ -95,7 +101,7 @@ function createContactShadowTexture(): THREE.CanvasTexture {
 }
 
 export const YsmViewport = forwardRef<YsmViewportHandle, YsmViewportProps>(
-  function YsmViewport({ queryRef, pausedRef, onTelemetry, onContextLost }, ref) {
+  function YsmViewport({ queryRef, pausedRef, onTelemetry, onContextLost, onError, className, style, disposeModelOnUnmount = true }, ref) {
     const containerRef = useRef<HTMLDivElement | null>(null);
     const activeModelRef = useRef<YsmModelInstance | null>(null);
     const sceneRef = useRef<THREE.Scene | null>(null);
@@ -115,6 +121,10 @@ export const YsmViewport = forwardRef<YsmViewportHandle, YsmViewportProps>(
     onTelemetryRef.current = onTelemetry;
     const onContextLostRef = useRef(onContextLost);
     onContextLostRef.current = onContextLost;
+    const onErrorRef = useRef(onError);
+    onErrorRef.current = onError;
+    const disposeModelOnUnmountRef = useRef(disposeModelOnUnmount);
+    disposeModelOnUnmountRef.current = disposeModelOnUnmount;
 
     useImperativeHandle(ref, () => ({
       setModel(instance: YsmModelInstance | null) {
@@ -180,8 +190,8 @@ export const YsmViewport = forwardRef<YsmViewportHandle, YsmViewportProps>(
       if (!mountEl) return;
 
       const isSoftwareGl = detectSoftwareWebGL();
-      const width = mountEl.clientWidth || window.innerWidth;
-      const height = mountEl.clientHeight || window.innerHeight;
+      const width = Math.max(1, mountEl.clientWidth);
+      const height = Math.max(1, mountEl.clientHeight);
 
       const scene = new THREE.Scene();
       scene.background = new THREE.Color('#11141b');
@@ -192,11 +202,17 @@ export const YsmViewport = forwardRef<YsmViewportHandle, YsmViewportProps>(
       camera.position.set(2.35, 1.85, 4.45);
       cameraRef.current = camera;
 
-      const renderer = new THREE.WebGLRenderer({
-        antialias: !isSoftwareGl,
-        powerPreference: 'high-performance',
-        alpha: false,
-      });
+      let renderer: THREE.WebGLRenderer;
+      try {
+        renderer = new THREE.WebGLRenderer({
+          antialias: !isSoftwareGl,
+          powerPreference: 'high-performance',
+          alpha: false,
+        });
+      } catch (error) {
+        onErrorRef.current?.(error instanceof Error ? error : new Error(String(error)));
+        return;
+      }
       renderer.outputColorSpace = THREE.SRGBColorSpace;
       renderer.toneMapping = THREE.ACESFilmicToneMapping;
       renderer.toneMappingExposure = 1.08;
@@ -208,6 +224,7 @@ export const YsmViewport = forwardRef<YsmViewportHandle, YsmViewportProps>(
 
       mountEl.innerHTML = '';
       mountEl.appendChild(renderer.domElement);
+      renderer.domElement.style.display = 'block';
 
       // Studio PBR Environment reflection (mandatory across GPU & software WebGL)
       const pmrem = new THREE.PMREMGenerator(renderer);
@@ -352,13 +369,15 @@ export const YsmViewport = forwardRef<YsmViewportHandle, YsmViewportProps>(
       // Resize handler
       const handleResize = () => {
         if (!mountEl) return;
-        const w = mountEl.clientWidth || window.innerWidth;
-        const h = mountEl.clientHeight || window.innerHeight;
+        const w = Math.max(1, mountEl.clientWidth);
+        const h = Math.max(1, mountEl.clientHeight);
         camera.aspect = w / h;
         camera.updateProjectionMatrix();
         renderer.setSize(w, h);
       };
       window.addEventListener('resize', handleResize);
+      const resizeObserver = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(handleResize) : undefined;
+      resizeObserver?.observe(mountEl);
 
       // Frame loop with software-WebGL afterDraw pacing
       let disposed = false;
@@ -480,13 +499,15 @@ export const YsmViewport = forwardRef<YsmViewportHandle, YsmViewportProps>(
         cancelAnimationFrame(frameId);
         clearTimeout(frameId);
         window.removeEventListener('resize', handleResize);
+        resizeObserver?.disconnect();
         controls.removeEventListener('start', onControlStart);
         controls.dispose();
         renderer.domElement.removeEventListener('webglcontextlost', handleContextLost);
         renderer.domElement.removeEventListener('webglcontextrestored', handleContextRestored);
 
         if (activeModelRef.current && !activeModelRef.current.isDisposed) {
-          activeModelRef.current.dispose();
+          activeModelRef.current.root.removeFromParent();
+          if (disposeModelOnUnmountRef.current) activeModelRef.current.dispose();
         }
         activeModelRef.current = null;
 
@@ -512,8 +533,10 @@ export const YsmViewport = forwardRef<YsmViewportHandle, YsmViewportProps>(
 
         scene.clear();
         renderer.dispose();
+        renderer.domElement.remove();
         sceneRef.current = null;
         rendererRef.current = null;
+        cameraRef.current = null;
       };
     }, [queryRef, pausedRef]);
 
@@ -521,7 +544,8 @@ export const YsmViewport = forwardRef<YsmViewportHandle, YsmViewportProps>(
       <div
         ref={containerRef}
         data-testid="ysm-webgl-canvas"
-        className="w-full h-full relative select-none"
+        className={className}
+        style={{ width: '100%', height: '100%', position: 'relative', userSelect: 'none', ...style }}
       />
     );
   },

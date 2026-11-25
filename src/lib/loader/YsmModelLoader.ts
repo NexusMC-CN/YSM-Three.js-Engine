@@ -398,7 +398,7 @@ export class YsmModelLoader {
             ? new Uint8Array(source)
             : new Uint8Array(await source.arrayBuffer());
       const filename =
-        options.filename ?? (source instanceof File ? source.name : undefined);
+        options.filename ?? (typeof File !== 'undefined' && source instanceof File ? source.name : undefined);
       const vfs = await unpackArchiveBytes(bytes, filename);
       return this.extractFromVirtualFileSystem(vfs);
     }

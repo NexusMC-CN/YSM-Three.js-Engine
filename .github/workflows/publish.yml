@@ -1,0 +1,51 @@
+name: Publish npm package
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: npm-publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          registry-url: 'https://registry.npmjs.org'
+          cache: npm
+      - name: Verify release version
+        shell: bash
+        run: |
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+          if (pkg.name !== '@lemwood/ysm-threejs-engine') throw new Error('Unexpected package name');
+          if (process.env.GITHUB_REF_TYPE === 'tag' && process.env.GITHUB_REF_NAME !== `v${pkg.version}`) {
+            throw new Error('Tag must match package.json version');
+          }
+          NODE
+      - run: npm ci
+      - run: npm test
+      - run: npm run lint
+      - run: npm run build
+      - run: npm run test:package
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:react-package
+      - name: Store tested npm tarball
+        uses: actions/upload-artifact@v4
+        with:
+          name: npm-package
+          path: .cache/npm/*.tgz
+      - name: Publish tested tarball
+        run: npm publish .cache/npm/*.tgz --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM }}

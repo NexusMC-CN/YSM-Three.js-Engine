@@ -76,7 +76,7 @@ export class TextureManager {
     const objectUrls: string[] = [];
 
     const loadOne = async (entry: TextureEntryInput): Promise<THREE.Texture> => {
-      if (entry.source instanceof HTMLCanvasElement) {
+      if (typeof HTMLCanvasElement !== 'undefined' && entry.source instanceof HTMLCanvasElement) {
         const tex = new THREE.CanvasTexture(entry.source);
         return configureBedrockTexture(tex);
       }
@@ -88,7 +88,10 @@ export class TextureManager {
         const blob =
           entry.source instanceof Blob
             ? entry.source
-            : new Blob([entry.source.slice().buffer], { type: 'image/png' });
+            : entry.source instanceof Uint8Array
+              ? new Blob([entry.source.slice().buffer], { type: 'image/png' })
+              : undefined;
+        if (!blob) throw new Error(`TextureManager: Unsupported texture source "${entry.id}"`);
         url = URL.createObjectURL(blob);
         objectUrls.push(url);
       }
