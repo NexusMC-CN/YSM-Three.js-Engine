@@ -46,6 +46,6 @@ jobs:
           name: npm-package
           path: .cache/npm/*.tgz
       - name: Publish tested tarball
-        run: npm publish .cache/npm/*.tgz --access public
+        run: npm run publish:package
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM }}

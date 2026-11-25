@@ -84,7 +84,8 @@
     "prepack": "npm run build:lib",
     "prepublishOnly": "npm test && npm run lint",
     "test:package": "node scripts/test-package.mjs",
-    "test:react-package": "node scripts/test-react-package.mjs"
+    "test:react-package": "node scripts/test-react-package.mjs",
+    "publish:package": "node scripts/publish-package.mjs"
   },
   "dependencies": {
     "fflate": "^0.8.3",
