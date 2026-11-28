@@ -1,0 +1,12 @@
+{
+  "name": "ysm-vue-viewer-example",
+  "private": true,
+  "type": "module",
+  "scripts": { "dev": "vite --host 127.0.0.1", "build": "vite build" },
+  "dependencies": {
+    "@lemwood/ysm-threejs-engine": "^0.2.0",
+    "three": "^0.187.0",
+    "vue": "^3.5.0"
+  },
+  "devDependencies": { "@vitejs/plugin-vue": "^6.0.5", "vite": "^8.3.0" }
+}

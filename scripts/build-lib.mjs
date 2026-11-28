@@ -15,22 +15,22 @@ for (const format of ['esm', 'cjs']) {
   const extension = format === 'esm' ? '.js' : '.cjs';
   const result = await build({
     absWorkingDir: root,
-    entryPoints: { index: 'src/lib/index.ts', core: 'src/core/index.ts', react: 'src/react/index.ts' },
+    entryPoints: { index: 'src/lib/index.ts', core: 'src/core/index.ts', react: 'src/react/index.ts', vue: 'src/vue/index.ts' },
     outdir,
     outExtension: { '.js': extension },
     bundle: true, format, platform: 'browser', target: 'es2022',
     splitting: format === 'esm', chunkNames: 'chunks/[name]-[hash]',
     minify: true, treeShaking: true, metafile: true,
-    external: ['three', 'react', 'react-dom'],
+    external: ['three', 'react', 'react-dom', 'vue'],
     jsx: 'automatic',
     banner: { js: '/*! YSGP decoder includes OpenYSM code (c) 2026 OpenYSM, MIT. See THIRD_PARTY_NOTICES.md. */' },
     plugins: [{
       name: 'shared-engine-entry',
       setup(build) {
-        // React and the root entry must share the same archive registry and
+        // Framework adapters and the root entry must share the same archive registry and
         // runtime classes, including in the CommonJS distribution.
         build.onResolve({ filter: /^\.\.\/lib$/ }, (args) => {
-          if (args.importer.replaceAll('\\', '/').includes('/src/react/')) return { path: `./index${extension}`, external: true };
+          if (/\/src\/(react|vue|components)\//.test(args.importer.replaceAll('\\', '/'))) return { path: `./index${extension}`, external: true };
         });
       },
     }],
@@ -84,4 +84,4 @@ collect(entry);
 const size = zlib.gzipSync(Buffer.concat([...visited].map((file) => fs.readFileSync(path.resolve(root, file))))).length;
 if (size >= 150 * 1024) throw new Error(`Engine exceeds 150 KB gzip budget: ${size} bytes`);
 for (const format of ['esm', 'cjs']) fs.rmSync(path.join(outdir, `meta-${format}.json`));
-console.log(`Built ESM, CommonJS and declarations for engine, core and React. Engine gzip: ${(size / 1024).toFixed(2)} KB.`);
+console.log(`Built ESM, CommonJS and declarations for engine, core, React and Vue. Engine gzip: ${(size / 1024).toFixed(2)} KB.`);

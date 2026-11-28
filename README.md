@@ -1,6 +1,6 @@
 # @lemwood/ysm-threejs-engine
 
-在网页中加载和播放 Minecraft Yes Steve Model 模型。提供 Three.js 引擎、React 查看器及独立的解析/动画模块，支持普通 ZIP 和 YSGP `.ysm` 模型包。
+在网页中加载和播放 Minecraft Yes Steve Model 模型。提供框架无关的 Three.js 引擎、原生查看器、React / Vue 3 组件及独立的解析/动画模块，支持普通 ZIP 和 YSGP `.ysm` 模型包。
 
 ## 安装
 
@@ -10,21 +10,89 @@ React 项目：
 npm install @lemwood/ysm-threejs-engine three react react-dom
 ```
 
+Vue 3 项目：
+
+```sh
+npm install @lemwood/ysm-threejs-engine three vue
+```
+
 已有 React 项目只需添加组件库和 `three`。TypeScript 项目还需安装对应的类型：
 
 ```sh
 npm install -D @types/three @types/react
 ```
 
-引擎可独立使用；只使用 `/core` 入口时无需安装 React 或 Three.js。
+已有 Vue 项目只需添加组件库和 `three`，TypeScript 项目添加 `@types/three`。原生引擎无需安装 React / Vue；只使用 `/core` 入口时也无需安装 Three.js。
 
 | 入口 | 用途 | 所需运行时 |
 | --- | --- | --- |
-| `@lemwood/ysm-threejs-engine` | 模型加载器、Three.js rig、动画及解析 API | `three` |
+| `@lemwood/ysm-threejs-engine` | 加载器、原生查看器、视口、Three.js rig、动画及解析 API | `three` |
 | `@lemwood/ysm-threejs-engine/react` | `YsmViewer`、`YsmViewport` 和组件类型 | `react`、`three` |
+| `@lemwood/ysm-threejs-engine/vue` | Vue 3 `YsmViewer` 和组件类型 | `vue`、`three` |
 | `@lemwood/ysm-threejs-engine/core` | JSON 解析、MoLang、关键帧、动画控制器 | 无 |
 
-提供 ESM、CommonJS 及 TypeScript 声明，支持 NodeNext/Bundler 类型解析。React 18.3/19；Three.js r170–r187。SSR 可导入组件，渲染需要浏览器 WebGL2；Next.js 中请在客户端组件使用。
+提供 ESM、CommonJS 及 TypeScript 声明，支持 NodeNext/Bundler 类型解析。React 18.3/19；Vue 3.3+；Three.js r170–r187。SSR 可导入组件，渲染需要浏览器 WebGL2；Next.js 中请在客户端组件使用。React、Vue 入口各自独立，不会加载另一个框架。
+
+## Vue 查看器
+
+```vue
+<script setup lang="ts">
+import { ref, shallowRef } from 'vue';
+import { YsmViewer, type YsmViewerHandle } from '@lemwood/ysm-threejs-engine/vue';
+
+const viewer = ref<YsmViewerHandle | null>(null);
+const file = shallowRef<File | null>(null);
+function selectFile(event: Event) {
+  file.value = (event.target as HTMLInputElement).files?.[0] ?? null;
+}
+</script>
+
+<template>
+  <input type="file" accept=".ysm,.zip" @change="selectFile" />
+  <YsmViewer
+    ref="viewer"
+    :source="file"
+    animation="idle"
+    :query="{ ground_speed: 0.8, is_on_ground: 1 }"
+    :style="{ height: '480px' }"
+    @load="model => console.log(model.animations)"
+    @error="error => console.error(error)"
+  >
+    <template #loading>正在加载模型…</template>
+    <template #error="{ error }">加载失败：{{ error.message }}</template>
+  </YsmViewer>
+  <button @click="viewer?.crossFadeTo('walk', 0.25)">行走</button>
+</template>
+```
+
+Vue 与 React 共用下表中的模型、动画、查询和相机属性；Vue 使用 `class` / `style` 设置外观，以 `#loading` / `#error="{ error }"` 插槽定制状态。事件为 `@load`、`@error`、`@warnings`、`@loading-change`、`@telemetry`、`@context-lost`，参数与 React 回调一致。模板 ref 提供相同的 `YsmViewerHandle` 方法。
+
+组件在 `onMounted` 创建视口，在卸载时释放模型和画布，可用于 Nuxt / Vue SSR。模型实例使用 `markRaw` 保持原始对象；在业务代码保存模型或文件包时建议使用 `shallowRef`，避免深层代理 Three.js 对象。完整示例见 [examples/vue](examples/vue)。
+
+## 原生 JavaScript 查看器
+
+模型加载、异步竞态处理、动画设置和 GPU 资源释放均在框架无关的核心控制器中实现。React / Vue 只负责生命周期和状态展示。
+
+```ts
+import { createYsmViewer } from '@lemwood/ysm-threejs-engine';
+
+// 容器需有明确尺寸，例如 <div id="viewer" style="height:480px"></div>。
+const viewer = createYsmViewer(document.querySelector<HTMLElement>('#viewer')!, {
+  animation: 'idle',
+  onError: console.error,
+  onStateChange: ({ loading }) => console.log({ loading }),
+});
+await viewer.load('/models/player.ysm');
+viewer.update({ paused: true, query: { ground_speed: 1 } });
+viewer.crossFadeTo('walk', 0.25);
+
+// 页面移除或路由切换时调用。
+viewer.dispose();
+```
+
+`createYsmViewer(container, options)` 返回 `YsmViewerController`，包含组件 ref 的所有方法，以及 `load(source, loadOptions?)`、`update(partialOptions)`、`getState()` 和 `dispose()`。`update` 仅更新传入字段，传 `undefined` 恢复该字段默认值；输入与加载选项不变时不会重新加载。加载失败或结果已过期时 `load` 返回 `null`，失败详情通过 `onError` / `getState().error` 获取。核心只管理画布，状态 UI 由调用方决定。
+
+手动管理模型时，使用 `createYsmViewport(container, { getQuery, getPaused, onTelemetry, disposeModelOnUnmount: false })`，再调用 `setModel(model)`、`setCameraPreset()`、`forceRenderFrame()`、`getMemorySnapshot()` 和 `dispose()`。移除或替换模型不会自动释放旧实例，由调用方管理；视口销毁默认释放当前实例。原生 API 只在创建视口时访问 DOM，模块可在 SSR 中安全导入。
 
 ## React 查看器
 
@@ -96,7 +164,7 @@ model.update(dt, { ground_speed: 0.8, is_on_ground: 1 });
 model.dispose();
 ```
 
-不需要 React。模型图片解码和渲染依赖浏览器；Node 中可读取无贴图模型、调用 `unpackArchiveBytes()` 或使用纯解析接口。
+不需要 React 或 Vue。模型图片解码和渲染依赖浏览器；Node 中可读取无贴图模型、调用 `unpackArchiveBytes()` 或使用纯解析接口。
 
 ## 纯解析与动画
 
@@ -123,6 +191,7 @@ npm run build          # 构建工作台
 npm run build:lib      # 构建组件库与类型声明
 npm run test:package   # 打包后安装到独立临时项目，验证入口与类型
 npm run test:react-package # 在浏览器验证已安装的组件；需 playwright install chromium
+npm run test:vue-package # 验证已安装的 Vue 组件和原生控制器
 npm pack               # 生成可 npm install 的 tgz
 ```
 

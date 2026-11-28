@@ -103,3 +103,21 @@ export type {
   YsmLoadSource,
   YsmPackFilesInput,
 } from './loader/types';
+
+// 6. Framework-independent viewer and DOM viewport
+export {
+  createYsmViewport,
+  type CameraPreset,
+  type ViewportTelemetry,
+  type YsmViewportHandle,
+  type YsmViewportController,
+  type YsmViewportOptions,
+} from './viewer/YsmViewport';
+export {
+  createYsmViewer,
+  YsmViewerController,
+  type YsmViewerSettings,
+  type YsmViewerOptions,
+  type YsmViewerState,
+  type YsmViewerHandle,
+} from './viewer/YsmViewerController';

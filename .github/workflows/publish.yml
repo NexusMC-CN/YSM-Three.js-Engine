@@ -40,6 +40,7 @@ jobs:
       - run: npm run test:package
       - run: npx playwright install --with-deps chromium
       - run: npm run test:react-package
+      - run: npm run test:vue-package
       - name: Store tested npm tarball
         uses: actions/upload-artifact@v4
         with:

@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": { "dev": "vite --host 127.0.0.1" },
   "dependencies": {
-    "@lemwood/ysm-threejs-engine": "^0.1.0",
+    "@lemwood/ysm-threejs-engine": "^0.2.0",
     "react": "^19.0.1",
     "react-dom": "^19.0.1",
     "three": "^0.187.0"

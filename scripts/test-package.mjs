@@ -26,6 +26,8 @@ assert.ok(paths.includes('README.md'));
 assert.ok(paths.includes('THIRD_PARTY_NOTICES.md'));
 assert.ok(paths.includes('LICENSE'));
 assert.ok(paths.includes('dist-lib/react.js'));
+assert.ok(paths.includes('dist-lib/vue.js'));
+assert.ok(paths.includes('dist-lib/types/vue/YsmViewer.d.ts'));
 assert.ok(paths.includes('dist-lib/types/react/YsmViewer.d.ts'));
 assert.ok(!paths.some((file) => /^(src|\.cache|node_modules|dist)\//.test(file)));
 assert.ok(!paths.some((file) => /\.ysm$|\.env|fixtures/.test(file)));
@@ -46,14 +48,67 @@ fs.writeFileSync(path.join(scratch, 'core-only.mjs'), `
   assert.equal(typeof require('${pkg.name}/core').BedrockModelParser, 'function');
   assert.throws(() => require.resolve('react'), { code: 'MODULE_NOT_FOUND' });
   assert.throws(() => require.resolve('three'), { code: 'MODULE_NOT_FOUND' });
-  console.log('Core ESM/CommonJS imports work without React or Three.js.');
+  assert.throws(() => require.resolve('vue'), { code: 'MODULE_NOT_FOUND' });
+  console.log('Core ESM/CommonJS imports work without React, Vue or Three.js.');
 `);
 console.log(execFileSync(process.execPath, ['core-only.mjs'], { cwd: scratch, encoding: 'utf8' }).trim());
 
-const versions = Object.fromEntries(['react', 'react-dom', 'three', '@types/react', '@types/react-dom', '@types/three'].map((name) => {
+const versions = Object.fromEntries(['react', 'react-dom', 'vue', 'three', '@types/react', '@types/react-dom', '@types/three'].map((name) => {
   const version = JSON.parse(fs.readFileSync(path.join(root, 'node_modules', name, 'package.json'), 'utf8')).version;
   return [name, version];
 }));
+console.log(npm(['install', `three@${versions.three}`, `@types/three@${versions['@types/three']}`, '--ignore-scripts', '--package-lock=false', ...registryArgs], scratch).trim());
+fs.writeFileSync(path.join(scratch, 'engine-only.mjs'), `
+  import assert from 'node:assert/strict';
+  import { createRequire } from 'node:module';
+  import { createYsmViewer, createYsmViewport } from '${pkg.name}';
+  const require = createRequire(import.meta.url);
+  for (const framework of ['react', 'vue']) assert.throws(() => require.resolve(framework), { code: 'MODULE_NOT_FOUND' });
+  assert.equal(typeof createYsmViewer, 'function');
+  assert.equal(typeof createYsmViewport, 'function');
+  assert.equal(typeof require('${pkg.name}').createYsmViewer, 'function');
+  console.log('Engine ESM/CommonJS imports work without React or Vue.');
+`);
+console.log(execFileSync(process.execPath, ['engine-only.mjs'], { cwd: scratch, encoding: 'utf8' }).trim());
+// A Vue-only application must not need React, including for declarations and SSR.
+console.log(npm(['install', `vue@${versions.vue}`, '--ignore-scripts', '--package-lock=false', ...registryArgs], scratch).trim());
+fs.writeFileSync(path.join(scratch, 'vue-only.mjs'), `
+  import assert from 'node:assert/strict';
+  import { createRequire } from 'node:module';
+  import { createSSRApp, h } from 'vue';
+  import { renderToString } from 'vue/server-renderer';
+  import { YsmViewer } from '${pkg.name}/vue';
+  import { createYsmViewer, createYsmViewport } from '${pkg.name}';
+  const require = createRequire(import.meta.url);
+  assert.throws(() => require.resolve('react'), { code: 'MODULE_NOT_FOUND' });
+  for (const component of [YsmViewer, require('${pkg.name}/vue').YsmViewer]) {
+    assert.match(await renderToString(createSSRApp({ render: () => h(component, { style: { height: '240px' } }) })), /height:240px/);
+  }
+  assert.equal(typeof createYsmViewer, 'function');
+  assert.equal(typeof createYsmViewport, 'function');
+  assert.equal(typeof require('${pkg.name}').createYsmViewer, 'function');
+  console.log('Vue-only ESM/CommonJS imports and SSR work without React.');
+`);
+console.log(execFileSync(process.execPath, ['vue-only.mjs'], { cwd: scratch, encoding: 'utf8' }).trim());
+const vueTypes = `
+import { h, ref } from 'vue';
+import { YsmViewer, type YsmViewerHandle } from '${pkg.name}/vue';
+import { createYsmViewer, type YsmViewerOptions } from '${pkg.name}';
+const viewer = ref<YsmViewerHandle | null>(null);
+h(YsmViewer, { source: '/player.ysm', onLoad(model) { model.play('idle'); }, onLoadingChange(loading) { const value: boolean = loading; void value; } });
+const options: YsmViewerOptions = { animation: null, query: { ground_speed: 1 } };
+function mount(element: HTMLElement) { const controller = createYsmViewer(element, options); controller.update({ paused: true }); controller.dispose(); }
+void viewer; void mount;
+`;
+fs.writeFileSync(path.join(scratch, 'vue-types.mts'), vueTypes);
+fs.writeFileSync(path.join(scratch, 'vue-types.cts'), vueTypes);
+for (const resolution of ['NodeNext', 'Bundler']) {
+  fs.writeFileSync(path.join(scratch, 'tsconfig.json'), JSON.stringify({
+    compilerOptions: { strict: true, noEmit: true, module: resolution === 'NodeNext' ? 'NodeNext' : 'ESNext', moduleResolution: resolution, target: 'ES2022', skipLibCheck: false },
+    include: resolution === 'NodeNext' ? ['vue-types.mts', 'vue-types.cts'] : ['vue-types.mts'],
+  }));
+  execFileSync(process.execPath, [path.join(root, 'node_modules/typescript/bin/tsc'), '-p', path.join(scratch, 'tsconfig.json')], { cwd: scratch, stdio: 'inherit' });
+}
 console.log(npm(['install', ...Object.entries(versions).map(([name, version]) => `${name}@${version}`), '--ignore-scripts', '--package-lock=false', ...registryArgs], scratch).trim());
 fs.writeFileSync(path.join(scratch, 'entries.mjs'), `
   import assert from 'node:assert/strict';
